@@ -105,4 +105,3 @@ def error_log(msg, *args):
         time.asctime(),
         msg % args
         ))
-
