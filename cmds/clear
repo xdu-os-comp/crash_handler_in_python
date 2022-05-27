@@ -1,0 +1,3 @@
+#!/bin/sh
+
+rm -r error report 2> /dev/null

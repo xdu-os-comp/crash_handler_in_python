@@ -29,12 +29,12 @@ class EventMgr:
         self._events = {}
         for k, v in waits.items():
             # (count, event for wait, event for notify)
-            self._events[k] = [v, asyncio.Future(), asyncio.Future()]
-            if not v: self._events[k][2].set_result(None)
+            if v != 0:
+                self._events[k] = [v, asyncio.Future(), asyncio.Future()]
 
     async def notify(self, event, *args):
         if event not in self._events:
-            raise NameError(f'No event named {event}')
+            return # Return directly if there are no coroutines waiting.
         self._events[event][1].set_result(args)
         await asyncio.ensure_future(self._events[event][2])
 
