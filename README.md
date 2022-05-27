@@ -3,6 +3,7 @@
 
 ## 依赖
 pwntool 
+psutil 
 python-filelock 
 gdb
 
