@@ -1,14 +1,16 @@
 from ..utils import EventMgr, SubscribeEvent
 from ..report import report_app
 import pwnlib.elf.corefile as core
-import psutil, platform, signal, json, subprocess
+import psutil, platform, signal, json, subprocess, time
 
 @SubscribeEvent({'coredump'})
 async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
+    # Connect information from the information we had.
 
     information = {}
 
     # Process-independent information
+    information['time'] = time.ctime()
     information['arch'] = platform.machine()
     information['dist'] = platform.freedesktop_os_release()['NAME']
     information['dist_ver'] = platform.freedesktop_os_release()['BUILD_ID']
@@ -57,8 +59,9 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
     information['children'] = temp2
 
     # Coredump information
-    coredump_path = await e.wait('coredump')
-    information['coredump'] = coredump_path
+    rpt = await e.wait('coredump')
+    coredump_path = rpt("core")
+    information['coredump'] = coredump_path + ".gz"
     if coredump_path == None:
         print("Error: Coredump Not Found!")
     else:
@@ -95,7 +98,7 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
         else:
             information['gdb_backtrace'] = "Exec failed!"
 
-    to_save = coredump_path.rstrip("core") + "information.json"
+    to_save = rpt("information.json")
     print(f"Saving information.json report to ",to_save)
     with open(to_save,"w+") as fp:
         json.dump(information,fp,indent=4,separators=(',',':'))
