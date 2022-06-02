@@ -18,4 +18,7 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
         data = json.load(fp)
         journal.send("[pycrash] Process {} named {} had exit with signal {} in {}.".format(data['pid'],data['name'],data['signal'],data['time']),PRIORITY=3)
         journal.send("[pycrash] Its execution path is {} and the full command is {}.".format(data['exec_path'],data['command']),PRIORITY=3)
-        journal.send("[pycrash] We have a coredump at {}, and the information.js is in the same folder.".format(data['coredump']),PRIORITY=3)
+        journal.send("[pycrash] Recorded data under {}".format(rpt.get_location()),PRIORITY=3)
+        temp = data.get('coredump')
+        if isinstance(temp, dict) and 'path' in temp:
+            journal.send("[pycrash] We have a coredump at {}.".format(data['coredump']),PRIORITY=3)

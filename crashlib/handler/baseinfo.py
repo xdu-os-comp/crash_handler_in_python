@@ -1,4 +1,5 @@
-from ..utils import EventMgr, SubscribeEvent
+from ..utils import EventMgr, SubscribeEvent, create_time
+from ..config import cfgglobal
 from ..report import report_app
 import pwnlib.elf.corefile as core
 import psutil, platform, signal, json, subprocess, time
@@ -10,10 +11,12 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
     information = {}
 
     # Process-independent information
-    information['time'] = time.ctime()
+    information['time'] = create_time().ctime()
+    information['timestamp'] = create_time().timestamp()
     information['arch'] = platform.machine()
-    information['dist'] = platform.freedesktop_os_release()['NAME']
-    information['dist_ver'] = platform.freedesktop_os_release()['BUILD_ID']
+    osi = platform.freedesktop_os_release()
+    information['dist'] = osi['NAME']
+    information['dist_ver'] = osi['PRETTY_NAME']
     information['kernel'] = platform.uname()[2]
     information['libc_ver'] = platform.libc_ver()[0] + ' ' + platform.libc_ver()[1]
     information['desktop_installed'] = subprocess.getstatusoutput("ls /usr/bin/*session")[1]
@@ -27,18 +30,20 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
     p = psutil.Process(pid)
     information['name'] = p.name()
     information['exec_path'] = p.exe()
-    # Commands is a long way...
-    string = p.cmdline()[0]
-    for i in p.cmdline():
-        if i == string:
-            continue
-        else:
-            string = string + " " + i
-
-    information['command'] = string
-    information['signal'] = signal.Signals(sig).name + ' (' + str(sig) + ')'
+    # We have to concat arguments manually because we have no idea getting cmd string
+    information['command'] = ' '.join(p.cmdline())
+    # Save original argument list. This is useful if some arg contains spaces.
+    information['argv'] = p.cmdline()
+    information['signal'] = {
+        'name': signal.Signals(sig).name,
+        'id': sig,
+    }
     information['pid'] = p.pid
     information['ppid'] = p.ppid()
+    temp = p.uids()
+    information['uid'] = {'real': temp.real, 'effective': temp.effective, 'saved': temp.saved}
+    temp = p.gids()
+    information['gid'] = {'real': temp.real, 'effective': temp.effective, 'saved': temp.saved}
     # The same as his parents and children
     temp1 = []
     parents = p.parents()
@@ -59,12 +64,8 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
     information['children'] = temp2
 
     # Coredump information
-    rpt = await e.wait('coredump')
-    coredump_path = rpt("core")
-    information['coredump'] = coredump_path + ".gz"
-    if coredump_path == None:
-        print("Error: Coredump Not Found!")
-    else:
+    coredump_path = await e.wait('coredump')
+    if coredump_path:
         to_be_read = core.Coredump(coredump_path)
 
         # Get registers in hex, so more codes are needed to write here:-P
@@ -91,16 +92,27 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
         # Get backtrace using gdb
         command = "gdb " + information['exec_path'] + " " + coredump_path + " --ex \"thread apply all bt full\" --batch"
         information['gdb_exec_operation'] = command
-        subp = subprocess.Popen(command,shell=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,encoding="utf-8")
-        subp.wait(5)
-        if subp.poll() == 0:
-            information['gdb_backtrace'] = subp.communicate()[0]
-        else:
-            information['gdb_backtrace'] = "Exec failed!"
+        # Add exception checks.
+        try:
+            subp = subprocess.Popen(command,shell=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,encoding="utf-8")
+            subp.wait(5)
+            if subp.poll() == 0:
+                information['gdb_backtrace'] = subp.communicate()[0]
+            else:
+                information['gdb_backtrace'] = "Exec failed!"
+        except:
+            pass # May there is no gdb present.
 
-    to_save = rpt("information.json")
-    print(f"Saving information.json report to ",to_save)
-    with open(to_save,"w+") as fp:
-        json.dump(information,fp,indent=4,separators=(',',':'))
-        print("Lonely day with my poor laptop")
+    with report_app(pid) as rpt:
+        if coredump_path:
+            compressed = cfgglobal.get_inst().get_bool('compress', 'coredump')
+            information['coredump'] = {
+                'path': rpt(compressed and 'core.gz' or 'core'),
+                'compressed': compressed,
+            }
+        to_save = rpt("information.json")
+        print(f"Saving information.json report to ",to_save)
+        with open(to_save,"w") as fp:
+            json.dump(information,fp,indent=4,separators=(',',':'))
+            print("Lonely day with my poor laptop")
 

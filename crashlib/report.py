@@ -1,7 +1,7 @@
+from errno import EPERM
 import shutil
-from .utils import get_internal_path, LocationWrapper
+from .utils import get_internal_path, LocationWrapper, create_time
 from .config import cfgglobal
-from datetime import datetime
 from filelock import FileLock
 import io, os, sys, time, json, psutil, inspect
 
@@ -12,11 +12,21 @@ report_root = LocationWrapper(_path)
 def report_app(pid):
     '''Make sure the report path for pid exists.'''
 
-    global _path
     time_pattern = cfgglobal.get_inst().get('time_pattern', 'report')
     exe = psutil.Process(pid).name()
-    folder = '%s-%s-%d' % (datetime.now().strftime(time_pattern), exe, pid)
+    folder = '%s-%s-%d' % (create_time().strftime(time_pattern), exe, pid)
     return LocationWrapper(os.path.join(_path, folder))
+
+def validate_report(location: str):
+    '''Returns absolute location of report path if location is valid, otherwise None and Exception.'''
+    if not os.path.isabs(location):
+        location_abs = os.path.join(get_internal_path(cfgglobal.get_inst().get('location', 'report')), location)
+        if os.path.isdir(location_abs):
+            return location_abs
+        else:
+            raise IsADirectoryError(location)
+    else:
+        raise OSError(EPERM, 'Is an absolute path.', location)
 
 def init_report(pid):
     '''Create folder for further report and add record.
@@ -44,26 +54,23 @@ def init_report(pid):
                     records.reverse()
 
                     while len(records) + 1 > report_count:
-                        record = records.pop()
-                        if 'location' in record:
-                            location = record['location']
+                        location = records.pop()
+                        if isinstance(location, str):
                             # Prevent accidental deletion of files not in the report path.
-                            if not os.path.isabs(location):
-                                location_abs = root(location)
-                                if os.path.isdir(location_abs):
-                                    try:
-                                        shutil.rmtree(location_abs, ignore_errors=True)
-                                    except Exception as e:
-                                        error_log('Fail to remove %s: %s', location, str(e))
+                            try:
+                                location_abs = validate_report(location)
+                                try:
+                                    shutil.rmtree(location_abs, ignore_errors=True)
+                                except Exception as e:
+                                    error_log('Fail to remove %s: %s', location, str(e))
+                            except:
+                                pass
 
                     records.reverse()
 
                 # If report is allowed, add the record.
                 if report_count:
-                    records.append({
-                        'location': os.path.basename(rpt.get_location()),
-                        'pid': pid,
-                    })
+                    records.append(os.path.basename(rpt.get_location()))
 
                 with open(list_path, 'w') as f:
                     json.dump(records, f, indent=2)

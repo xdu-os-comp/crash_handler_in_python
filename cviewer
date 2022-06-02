@@ -1,38 +1,23 @@
 #!/usr/bin/python3
 
-from typing import TextIO
-from crashlib.report import report_root
+from io import FileIO
+import subprocess
+from tempfile import NamedTemporaryFile
+from typing import Iterable
+from crashlib.report import report_root, validate_report
+from crashlib.utils import dump_object
 from prettytable import PrettyTable, PLAIN_COLUMNS
 from colorama import Fore
 from argparse import ArgumentParser
-import sys, json
-import time, datetime
+import os, sys, json, time, datetime
 
 coloring = lambda s, c: c + str(s) + Fore.RESET
 
 def time_t(t):
     if t == 'today':
         return time.struct_time(datetime.date.today().timetuple())
-    elif t == 'yesterday':
-        return time.struct_time(datetime.date.today().timetuple()) - datetime.timedelta(days=1)
     else:
         return time.strptime(t, '%Y-%m-%d')
-
-def test():
-    t = PrettyTable()
-    t.set_style(PLAIN_COLUMNS)
-    t.title = 123
-    t.add_rows([
-        [1, coloring(114514, Fore.BLUE)],
-        [2, 1919810],
-    ])
-    t.field_names = ['id', 'name']
-    print(t)
-
-    print('done.')
-
-    exit(0)
-# test()
 
 def get_args():
     '''cviewer arguments parser'''
@@ -46,6 +31,7 @@ def get_args():
     cmd.add_parser('debug', help='Start a debugger for the specified record').add_argument('filters', nargs='*')
 
     parser.add_argument('--no-legend', help='Do not print the column headers', action='store_true')
+    parser.add_argument('--no-fold', help='Do not limit column width', action='store_true')
     parser.add_argument('--json', choices=['pretty', 'short', 'off'], help='Generate JSON output')
     parser.add_argument('--debugger', help='Use the given debugger')
     parser.add_argument('-A', '--debugger-arguments', dest='darg', help='Pass the given arguments to the debugger')
@@ -53,37 +39,238 @@ def get_args():
     parser.add_argument('-1', dest='only1', action='store_true', help='Show information about most recent entry only')
     parser.add_argument('-S', '--since', type=time_t, help='Only print records since the date')
     parser.add_argument('-r', '--reverse', action='store_true', help='Show the newest entries first')
-    parser.add_argument('-o', '--output', type=lambda f: open(f, 'w'), help='Output redirection')
+    parser.add_argument('-o', '--output', type=lambda f: open(f, 'wb'), help='Output redirection')
 
-    parser.set_defaults(command='list', filters=[], json='off', debugger='gdb', darg='', n=0, since=time.gmtime(0), output=sys.stdout)
+    parser.set_defaults(command='list', filters=[], json='off', debugger='gdb', darg='', n=0, since=time.gmtime(0), output=os.fdopen(1, 'wb'))
 
     return parser.parse_args(sys.argv[1:])
 
-def filter_condition(filters: list[str], since: time.struct_time):
-    def inner(x: dict):
-        return True
-    return inner
+def filter_and_collect(records: Iterable[str], filters: list[str], since: time.struct_time):
+    '''Generates matched records under specified conditions.'''
+    for location in records:
+        location_abs = None
+        try:
+            location_abs = validate_report(location)
+        except OSError as e:
+            print(e, file=sys.stderr)
+        else:
+            try:
+                with open(os.path.join(location_abs, 'information.json')) as f:
+                    info = json.load(f)
+            except (IOError, OSError, json.JSONDecodeError) as e:
+                # Skip this record and warn if some error occurs.
+                print(e, file=sys.stderr)
+            else:
+                if isinstance(info, dict):
+                    try:
+                        if time.gmtime(info['timestamp']) < since:
+                            raise Exception
+                    except:
+                        pass
+                    else:
+                        try:
+                            lookup = [str(info['pid']), info['name'], info['exec_path']]
+                        except:
+                            pass
+                        else:
+                            for filter in filters:
+                                if filter not in lookup:
+                                    break
+                            else:
+                                info['location'] = location_abs
+                                yield info
 
-def records_list(records: list, filters: list[str], legend: bool, jsonfmt: str, n: int, only1: bool, since: time.struct_time, reverse: bool):
+no_matches = lambda: print(coloring('No records found.', Fore.RED), file=sys.stderr)
+bad_record = lambda: print(coloring('Bad record.', Fore.RED), file=sys.stderr)
+
+def records_list(records: list[str], filters: list[str], legend: bool, fold: bool, jsonfmt: str, n: int, only1: bool, since: time.struct_time, reverse: bool):
     '''List matched records.'''
-    # Prepare for file list
-    t = PrettyTable()
-    t.set_style(PLAIN_COLUMNS)
-    t.field_names = ['id', 'name']
-    t.add_rows([
-        [1, coloring(114514, Fore.BLUE)],
-        [2, 1919810],
-    ])
-    print(t)
 
-def records_info(records: list, filters: list[str], since: time.struct_time, reverse: bool):
+    is_json = jsonfmt in ('pretty', 'short')
+
+    def coloring_wrapper(s, c, alt=False):
+        if is_json:
+            if alt:
+                return None
+            else:
+                return s
+        else:
+            return coloring(s, c)
+
+    it = filter_and_collect((reverse and reversed or iter)(records), filters, since)
+
+    # Collect matched records.
+    matches: list[dict] = []
+    if only1:
+        try:
+            matches.append(next(it))
+        except StopIteration:
+            pass
+    elif n > 0:
+        try:
+            for _ in range(n):
+                matches.append(next(it))
+        except StopIteration:
+            pass
+    else:
+        matches.extend(it)
+
+    if not matches:
+        no_matches()
+    else:
+        # Prepare for file list or json.
+
+        table = ['lTIME', 'rPID', 'rUID', 'rGID', 'lSIG', 'lCOREFILE', 'lEXE', 'rSIZE']
+        if is_json:
+            legend = [column[1:] for column in table]
+            dataset = []
+        else:
+            t = PrettyTable()
+            t.set_style(PLAIN_COLUMNS)
+            for column in table:
+                t.add_column(column[1:], [], align=column[:1])
+            if fold:
+                t._max_width = {'COREFILE': 24, 'EXE': 24}
+            t.left_padding_width, t.right_padding_width = 0, 1
+
+        invalid = coloring_wrapper('N/A', Fore.RED, alt=True)
+
+        for match in matches:
+            uid = invalid
+            temp = match.get('uid')
+            if isinstance(temp, dict):
+                uid = temp.get('real', invalid)
+
+            gid = invalid
+            temp = match.get('gid')
+            if isinstance(temp, dict):
+                gid = temp.get('real', invalid)
+
+            sig = invalid
+            temp = match.get('signal')
+            if isinstance(temp, dict):
+                sig = temp.get('name', invalid)
+
+            coredump_path, size = invalid, invalid
+            temp = match.get('coredump')
+            if isinstance(temp, dict):
+                if 'path' in temp:
+                    coredump_path = temp['path']
+                    if os.path.isfile(coredump_path):
+                        size = os.path.getsize(coredump_path)
+                        if temp.get('compressed', False):
+                            size = coloring_wrapper(size, Fore.BLUE)
+
+            exec_path = invalid
+            if 'exec_path' in match:
+                exec_path = match['exec_path']
+                if not os.path.isfile(exec_path):
+                    exec_path = coloring_wrapper(exec_path, Fore.RED)
+
+            args = [match.get('time', invalid), match.get('pid', invalid), uid, gid, sig, coredump_path, exec_path, size]
+            if is_json:
+                data = {}
+                for i in range(len(legend)):
+                    data[legend[i]] = args[i]
+                dataset.append(data)
+            else:
+                t.add_row(args)
+        
+        if is_json:
+            json.dump(dataset, sys.stdout, indent=jsonfmt == 'pretty' and True or None)
+        else:
+            print(t.get_string(header=legend))
+
+def records_info(records: list[str], filters: list[str], jsonfmt: str, since: time.struct_time, reverse: bool):
     '''Show information of first matched record.'''
 
-def records_dump(records: list, filters: list[str], since: time.struct_time, reverse: bool, f: TextIO):
+    it = filter_and_collect((reverse and reversed or iter)(records), filters, since)
+
+    try:
+        match = next(it)
+    except StopIteration:
+        no_matches()
+        return
+
+    if jsonfmt in ('pretty', 'short'):
+        json.dump(match, sys.stdout, indent=jsonfmt == 'pretty' and True or None)
+    else:
+        dump_object(match)
+
+def records_dump(records: list[str], filters: list[str], since: time.struct_time, reverse: bool, f: FileIO):
     '''Dump raw coredump of first matched record.'''
 
-def records_debug(records: list, filters: list[str], since: time.struct_time, reverse: bool, debugger: str, darg: str):
+    it = filter_and_collect((reverse and reversed or iter)(records), filters, since)
+
+    try:
+        match = next(it)
+    except StopIteration:
+        no_matches()
+        return
+
+    temp = match.get('coredump')
+    if isinstance(temp, dict):
+        if 'path' in temp and 'compressed' in temp:
+            path, compressed = temp['path'], temp['compressed']
+            if isinstance(path, str) and isinstance(compressed, bool):
+                try:
+                    if compressed:
+                        import gzip
+                        with gzip.open(path, 'rb') as g:
+                            f.writelines(g)
+                    else:
+                        with open(path, 'rb') as g:
+                            f.writelines(g)
+                except (IOError, OSError) as e:
+                    print(e, file=sys.stderr)
+            else:
+                bad_record()
+        else:
+            bad_record()
+
+def records_debug(records: list[str], filters: list[str], since: time.struct_time, reverse: bool, debugger: str, darg: str):
     '''Debug first matched crashed app.'''
+
+    it = filter_and_collect((reverse and reversed or iter)(records), filters, since)
+
+    try:
+        match = next(it)
+    except StopIteration:
+        no_matches()
+        return
+
+    if 'exec_path' in match:
+        exec_path = match['exec_path']
+        if not os.path.isfile(exec_path):
+            return
+    else:
+        return
+
+    temp = match.get('coredump')
+    if isinstance(temp, dict):
+        if 'path' in temp and 'compressed' in temp:
+            path, compressed = temp['path'], temp['compressed']
+            if isinstance(path, str) and isinstance(compressed, bool):
+                try:
+                    if compressed:
+                        import gzip
+                        with gzip.open(path, 'rb') as g:
+                            f = NamedTemporaryFile('wb')
+                            coredump_path = f.name
+                            f.writelines(g)
+                    else:
+                        coredump_path = path # The path is it.
+                except (IOError, OSError) as e:
+                    print(e, file=sys.stderr)
+            else:
+                bad_record()
+        else:
+            bad_record()
+
+    if coredump_path:
+        subprocess.Popen('%s %s %s %s' % (debugger, darg, exec_path, coredump_path), shell=True)
+
+    if f: f.close()
 
 with report_root as rpt:
     list_path = rpt('list')
@@ -100,11 +287,10 @@ with report_root as rpt:
 
     arg = get_args()
 
-    print(arg)
     if   arg.command == 'list':
-        records_list(records, arg.filters, not arg.no_legend, arg.json, arg.n, arg.only1, arg.since, arg.reverse)
+        records_list(records, arg.filters, not arg.no_legend, not arg.no_fold, arg.json, arg.n, arg.only1, arg.since, arg.reverse)
     elif arg.command == 'info':
-        records_info(records, arg.filters, arg.since, arg.reverse)
+        records_info(records, arg.filters, arg.json, arg.since, arg.reverse)
     elif arg.command == 'dump':
         records_dump(records, arg.filters, arg.since, arg.reverse, arg.output)
     elif arg.command == 'debug':

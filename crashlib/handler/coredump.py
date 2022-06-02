@@ -26,7 +26,7 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
                 f.write(buf)
 
         # Notify other handlers that need the coredump file.
-        await e.notify('coredump', written and rpt or None)
+        await e.notify('coredump', written and core_path or None)
 
         if written:
             if cfgglobal.get_inst().get_bool('compress', 'coredump'):
@@ -41,5 +41,5 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
             os.unlink(core_path)
 
         # Notify other handlers that need the coredump file.
-        await e.notify('logging', rpt or None)
+        await e.notify('logging', rpt)
 
