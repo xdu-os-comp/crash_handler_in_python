@@ -1,0 +1,113 @@
+#!/usr/bin/python3
+
+from typing import TextIO
+from crashlib.report import report_root
+from prettytable import PrettyTable, PLAIN_COLUMNS
+from colorama import Fore
+from argparse import ArgumentParser
+import sys, json
+import time, datetime
+
+coloring = lambda s, c: c + str(s) + Fore.RESET
+
+def time_t(t):
+    if t == 'today':
+        return time.struct_time(datetime.date.today().timetuple())
+    elif t == 'yesterday':
+        return time.struct_time(datetime.date.today().timetuple()) - datetime.timedelta(days=1)
+    else:
+        return time.strptime(t, '%Y-%m-%d')
+
+def test():
+    t = PrettyTable()
+    t.set_style(PLAIN_COLUMNS)
+    t.title = 123
+    t.add_rows([
+        [1, coloring(114514, Fore.BLUE)],
+        [2, 1919810],
+    ])
+    t.field_names = ['id', 'name']
+    print(t)
+
+    print('done.')
+
+    exit(0)
+# test()
+
+def get_args():
+    '''cviewer arguments parser'''
+    parser = ArgumentParser()
+
+    # Add some sub-commands.
+    cmd = parser.add_subparsers(dest='command', help='operation', metavar='COMMAND')
+    cmd.add_parser('list', help='List available records (default)').add_argument('filters', nargs='*')
+    cmd.add_parser('info', help='Show detailed information about the specified record').add_argument('filters', nargs='*')
+    cmd.add_parser('dump', help='Dump raw coredump file to stdout').add_argument('filters', nargs='*')
+    cmd.add_parser('debug', help='Start a debugger for the specified record').add_argument('filters', nargs='*')
+
+    parser.add_argument('--no-legend', help='Do not print the column headers', action='store_true')
+    parser.add_argument('--json', choices=['pretty', 'short', 'off'], help='Generate JSON output')
+    parser.add_argument('--debugger', help='Use the given debugger')
+    parser.add_argument('-A', '--debugger-arguments', dest='darg', help='Pass the given arguments to the debugger')
+    parser.add_argument('-n', type=int, help='Show maximum number of rows')
+    parser.add_argument('-1', dest='only1', action='store_true', help='Show information about most recent entry only')
+    parser.add_argument('-S', '--since', type=time_t, help='Only print records since the date')
+    parser.add_argument('-r', '--reverse', action='store_true', help='Show the newest entries first')
+    parser.add_argument('-o', '--output', type=lambda f: open(f, 'w'), help='Output redirection')
+
+    parser.set_defaults(command='list', filters=[], json='off', debugger='gdb', darg='', n=0, since=time.gmtime(0), output=sys.stdout)
+
+    return parser.parse_args(sys.argv[1:])
+
+def filter_condition(filters: list[str], since: time.struct_time):
+    def inner(x: dict):
+        return True
+    return inner
+
+def records_list(records: list, filters: list[str], legend: bool, jsonfmt: str, n: int, only1: bool, since: time.struct_time, reverse: bool):
+    '''List matched records.'''
+    # Prepare for file list
+    t = PrettyTable()
+    t.set_style(PLAIN_COLUMNS)
+    t.field_names = ['id', 'name']
+    t.add_rows([
+        [1, coloring(114514, Fore.BLUE)],
+        [2, 1919810],
+    ])
+    print(t)
+
+def records_info(records: list, filters: list[str], since: time.struct_time, reverse: bool):
+    '''Show information of first matched record.'''
+
+def records_dump(records: list, filters: list[str], since: time.struct_time, reverse: bool, f: TextIO):
+    '''Dump raw coredump of first matched record.'''
+
+def records_debug(records: list, filters: list[str], since: time.struct_time, reverse: bool, debugger: str, darg: str):
+    '''Debug first matched crashed app.'''
+
+with report_root as rpt:
+    list_path = rpt('list')
+    records = []
+    try:
+        with open(list_path, 'r') as f:
+            records = json.load(f)
+
+        # If records is not list, abort parsing.
+        if not isinstance(records, list):
+            records = []
+    except:
+        pass # Ignore.
+
+    arg = get_args()
+
+    print(arg)
+    if   arg.command == 'list':
+        records_list(records, arg.filters, not arg.no_legend, arg.json, arg.n, arg.only1, arg.since, arg.reverse)
+    elif arg.command == 'info':
+        records_info(records, arg.filters, arg.since, arg.reverse)
+    elif arg.command == 'dump':
+        records_dump(records, arg.filters, arg.since, arg.reverse, arg.output)
+    elif arg.command == 'debug':
+        records_debug(records, arg.filters, arg.since, arg.reverse, arg.debugger, arg.darg)
+    else:
+        assert 0
