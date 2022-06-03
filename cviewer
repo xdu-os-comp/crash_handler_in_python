@@ -246,6 +246,7 @@ def records_debug(records: list[str], filters: list[str], since: time.struct_tim
     else:
         return
 
+    f = None
     temp = match.get('coredump')
     if isinstance(temp, dict):
         if 'path' in temp and 'compressed' in temp:
@@ -268,7 +269,8 @@ def records_debug(records: list[str], filters: list[str], since: time.struct_tim
             bad_record()
 
     if coredump_path:
-        subprocess.Popen('%s %s %s %s' % (debugger, darg, exec_path, coredump_path), shell=True)
+        with subprocess.Popen('%s %s %s %s' % (debugger, darg, exec_path, coredump_path), shell=True) as p:
+            p.wait()
 
     if f: f.close()
 
