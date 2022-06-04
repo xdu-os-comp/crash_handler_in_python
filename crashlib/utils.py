@@ -1,5 +1,4 @@
 import os.path, sys, psutil, asyncio
-from typing import TextIO
 from datetime import datetime
 
 def get_internal_path(name):
@@ -32,33 +31,6 @@ class LocationWrapper:
 
     def __call__(self, file):
         return os.path.join(self._dir, file)
-
-def dump_object(d, f: TextIO=sys.stdout, indent=0):
-    '''Dumps an object to f.'''
-
-    pad = indent and ' ' * indent or '\t'
-
-    def dump_proc(depth, data):
-        pad_ = pad * depth
-        if isinstance(data, (dict, list)):
-            def iter_dict_and_list():
-                if isinstance(data, dict):
-                    for k, v in data.items():
-                        yield k, v
-                else:
-                    for i in range(len(data)):
-                        yield '#%d' % i, data[i]
-
-            for k, v in iter_dict_and_list():
-                if not isinstance(v, (list, dict)):
-                    print(pad_ + '%s: %s' % (k, str(v)), file=f)
-                else:
-                    print(pad_ + '%s:' % k, file=f)
-                    dump_proc(depth + 1, v)
-        else:
-            raise ValueError(data)
-
-    dump_proc(0, d)
 
 class EventMgr:
     '''Manage events during tasks running.'''

@@ -5,7 +5,6 @@ import subprocess
 from tempfile import NamedTemporaryFile
 from typing import Iterable
 from crashlib.report import report_root, validate_report
-from crashlib.utils import dump_object
 from prettytable import PrettyTable, PLAIN_COLUMNS
 from colorama import Fore
 from argparse import ArgumentParser
@@ -193,12 +192,52 @@ def records_info(records: list[str], filters: list[str], jsonfmt: str, since: ti
         no_matches()
         return
 
-    if not mappings:
-        match.pop('mappings', None)
+    from typing import TextIO
+    def dump_object(d, f: TextIO=sys.stdout, indent=0):
+        '''Dumps an object to f.'''
+
+        pad = indent and ' ' * indent or '\t'
+
+        def dump_proc(depth, data):
+            pad_ = pad * depth
+            pad__ = pad_ + pad
+            if isinstance(data, (dict, list)):
+                def iter_dict_and_list():
+                    if isinstance(data, dict):
+                        for k, v in data.items():
+                            yield k, v
+                    else:
+                        for i in range(len(data)):
+                            yield '#%d' % i, data[i]
+
+                for k, v in iter_dict_and_list():
+                    if not isinstance(v, (list, dict)):
+                        v_str = str(v)
+                        # Break line if content is too long or there are some '\n' in the string.
+                        if '\n' in v_str:
+                            v_str = v_str.splitlines()
+                        elif len(v_str) > 64:
+                            v_str = [v_str]
+
+                        if isinstance(v_str, list):
+                            print(pad_ + '%s:' % k, file=f)
+                            for line in v_str:
+                                print(pad__ + line, file=f)
+                        else:
+                            print(pad_ + '%s: %s' % (k, v_str), file=f)
+                    else:
+                        print(pad_ + '%s:' % k, file=f)
+                        dump_proc(depth + 1, v)
+            else:
+                raise ValueError(data)
+
+        dump_proc(0, d)
 
     if jsonfmt in ('pretty', 'short'):
         json.dump(match, sys.stdout, indent=jsonfmt == 'pretty' and True or None)
     else:
+        if not mappings:
+            match.pop('mappings', None)
         dump_object(match)
 
 def records_dump(records: list[str], filters: list[str], since: time.struct_time, reverse: bool, f: FileIO):
