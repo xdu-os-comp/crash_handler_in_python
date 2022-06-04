@@ -16,7 +16,6 @@ class CfgMgr:
 
     def get(self, name, section):
         '''Get string value.'''
-
         parser = self._parser
         try:
             return parser.get(section, name)

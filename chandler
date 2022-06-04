@@ -19,7 +19,7 @@ if __name__ == '__main__':
     import io, os, sys
 
     if not os.isatty(2):
-        log = os.path.join(os.path.dirname(__file__), 'error')
+        log = os.path.join(os.path.dirname(__file__), '/var/log/pycrash.log')
         try:
             f = os.open(log, os.O_WRONLY | os.O_CREAT, 0o644)
             if sys.stdout: sys.stdout.flush()

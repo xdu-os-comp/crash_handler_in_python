@@ -11,7 +11,7 @@ def get_inst():
         _cfg_global = CfgMgr(get_internal_path('config.ini'), {
             'report': {
                 'maximum': 5,
-                'location': 'report',
+                'location': '/var/log/pycrash-report',
                 'time_pattern': '%Y%m%d%H%M%S',
             },
             'coredump': {

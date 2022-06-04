@@ -6,6 +6,7 @@ pwntool
 psutil 
 python-filelock 
 gdb
+python-systemd
 
 ## 使用方式
 `echo "|/path/to/crash_handler_in_python/chandler %p %s %c" > /proc/sys/kernel/core_pattern `
