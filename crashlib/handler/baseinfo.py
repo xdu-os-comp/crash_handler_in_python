@@ -101,6 +101,7 @@ async def crash_handler(e: EventMgr, pid, sig, ulimit, fd):
             else:
                 information['gdb_backtrace'] = "Exec failed!"
         except:
+            information['gdb_backtrace'] = "Unable to execute because no gdb:-("
             pass # May there is no gdb present.
 
     with report_app(pid) as rpt:
