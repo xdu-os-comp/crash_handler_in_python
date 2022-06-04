@@ -32,6 +32,7 @@ def get_args():
 
     parser.add_argument('--no-legend', help='Do not print the column headers', action='store_true')
     parser.add_argument('--no-fold', help='Do not limit column width', action='store_true')
+    parser.add_argument('--mappings', help='Show mappings field if it exists', action='store_true')
     parser.add_argument('--json', choices=['pretty', 'short', 'off'], help='Generate JSON output')
     parser.add_argument('--debugger', help='Use the given debugger')
     parser.add_argument('-A', '--debugger-arguments', dest='darg', help='Pass the given arguments to the debugger')
@@ -181,7 +182,7 @@ def records_list(records: list[str], filters: list[str], legend: bool, fold: boo
         else:
             print(t.get_string(header=legend))
 
-def records_info(records: list[str], filters: list[str], jsonfmt: str, since: time.struct_time, reverse: bool):
+def records_info(records: list[str], filters: list[str], jsonfmt: str, since: time.struct_time, reverse: bool, mappings: bool):
     '''Show information of first matched record.'''
 
     it = filter_and_collect((reverse and reversed or iter)(records), filters, since)
@@ -191,6 +192,9 @@ def records_info(records: list[str], filters: list[str], jsonfmt: str, since: ti
     except StopIteration:
         no_matches()
         return
+
+    if not mappings:
+        match.pop('mappings', None)
 
     if jsonfmt in ('pretty', 'short'):
         json.dump(match, sys.stdout, indent=jsonfmt == 'pretty' and True or None)
@@ -292,7 +296,7 @@ with report_root as rpt:
     if   arg.command == 'list':
         records_list(records, arg.filters, not arg.no_legend, not arg.no_fold, arg.json, arg.n, arg.only1, arg.since, arg.reverse)
     elif arg.command == 'info':
-        records_info(records, arg.filters, arg.json, arg.since, arg.reverse)
+        records_info(records, arg.filters, arg.json, arg.since, arg.reverse, arg.mappings)
     elif arg.command == 'dump':
         records_dump(records, arg.filters, arg.since, arg.reverse, arg.output)
     elif arg.command == 'debug':
